@@ -1,0 +1,126 @@
+version: "3"
+
+# All available services
+services:
+
+  # Computation
+  jupyter:
+    container_name: "ds-flow_jupyter"
+    restart: "always"
+    build: services/jupyter
+    env_file:
+      - ./config/jupyter.env
+      - ./config/minio.env
+      - ./config/shared_database.env
+    volumes:
+      - ./shared/notebooks/:/home/jovyan/work/notebooks
+      - ./shared/dags/:/home/jovyan/work/dags
+      - ./services/apistar/api/:/home/jovyan/work/api
+    ports:
+      - 9888:8888
+    entrypoint: sh -c 'start-notebook.sh --NotebookApp.token=$$JUPYTER_PASSWORD'
+
+  # Visualization
+  superset:
+    container_name: "ds-flow_superset"
+    restart: "always"
+    image: tylerfowler/superset:0.24
+    depends_on:
+        - postgres
+    env_file:
+        - ./config/superset_container.env
+        - ./config/superset_database.env
+    ports:
+      - 9555:8088
+
+  # Misc Storage
+  postgres:
+    container_name: "ds-flow_postgres"
+    restart: "always"
+    image: postgres
+    env_file:
+      - ./config/postgres.env
+      - ./config/superset_database.env
+      - ./config/airflow_database.env
+      - ./config/shared_database.env
+    volumes:
+      - postgres_volume:/var/lib/postgresql/data/
+      - ./services/postgres/:/docker-entrypoint-initdb.d/
+    ports:
+      - 5432:5432
+
+  #pgweb for db management
+  pgweb:
+    container_name: pgweb
+    restart: always
+    image: sosedoff/pgweb
+    ports: 
+      - 9777:8081 
+    links: 
+      - postgres:postgres  # my database container is called postgres, not db
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+    depends_on:
+      - postgres
+
+  # Scheduling
+  airflow:
+    container_name: "ds-flow_airflow"
+    restart: "always"
+    image: puckel/docker-airflow:1.9.0-2
+    depends_on:
+      - postgres
+    env_file:
+      - ./config/airflow_container.env
+      - ./config/minio.env
+      - ./config/shared_database.env
+    volumes:
+      - ./shared/requirements.txt:/requirements.txt
+      - ./shared/dags/:/usr/local/airflow/dags
+    ports:
+      - 9111:8080
+    command: webserver
+
+  # Model Storage
+  minio:
+    container_name: "ds-flow_minio"
+    restart: "always"
+    image: minio/minio
+    env_file:
+        - ./config/minio.env
+    volumes:
+        - minio_volume:/data
+    ports:
+        - 9444:9000
+    command: server /data
+
+  # API
+  apistar:
+    container_name: "ds-flow_apistar"
+    restart: "always"
+    build: services/apistar
+    env_file:
+      - ./config/minio.env
+    volumes:
+      - ./services/apistar/api:/usr/src/app
+    ports:
+      - 9999:8000
+    command: gunicorn app:app -b 0.0.0.0:8000
+
+  # Admin Overview
+  portainer:
+    container_name: "ds-flow_portainer"
+    restart: "always"
+    image: portainer/portainer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_volume:/data
+    ports:
+      - 9090:9000
+    command: -H unix:///var/run/docker.sock
+
+# Volumes to persist data
+volumes:
+  postgres_volume:
+  minio_volume:
+  portainer_volume:
